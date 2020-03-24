@@ -1,5 +1,6 @@
 package com.zeno.flutter_audio_recorder;
 
+import android.app.Activity;
 import android.Manifest;
 import android.content.pm.PackageManager;
 import android.media.AudioFormat;
@@ -29,13 +30,20 @@ import io.flutter.plugin.common.MethodChannel.Result;
 import io.flutter.plugin.common.PluginRegistry;
 import io.flutter.plugin.common.PluginRegistry.Registrar;
 
+import io.flutter.plugin.common.BasicMessageChannel;
+import org.json.JSONException;
+import org.json.JSONObject;
+import android.os.Handler;
+import android.os.Looper;
+import java.util.ArrayList;
+
 /** FlutterAudioRecorderPlugin */
 public class FlutterAudioRecorderPlugin implements MethodCallHandler, PluginRegistry.RequestPermissionsResultListener {
   private static final String LOG_NAME = "AndroidAudioRecorder";
   private static final int PERMISSIONS_REQUEST_RECORD_AUDIO = 200;
   private static final byte RECORDER_BPP = 16; // we use 16bit
   private Registrar registrar;
-  private int mSampleRate = 16000; // 16Khz
+  private int mSampleRate = 44100; // 44.1Khz
   private AudioRecord mRecorder = null;
   private String mFilePath;
   private String mExtension;
@@ -48,15 +56,21 @@ public class FlutterAudioRecorderPlugin implements MethodCallHandler, PluginRegi
   private long mDataSize = 0;
   private Result _result;
 
+  // private List<Short> listData;
+  private int[] audioData;
+  private static MethodChannel channel;
 
   /** Plugin registration. */
   public static void registerWith(Registrar registrar) {
-
-    final MethodChannel channel = new MethodChannel(registrar.messenger(), "flutter_audio_recorder");
-    channel.setMethodCallHandler(new FlutterAudioRecorderPlugin(registrar));
+    FlutterAudioRecorderPlugin plugin = new FlutterAudioRecorderPlugin(registrar);
+    // final MethodChannel channel = new MethodChannel(registrar.messenger(), "flutter_audio_recorder");
+    // channel.setMethodCallHandler(new FlutterAudioRecorderPlugin(registrar));
   }
 
   public FlutterAudioRecorderPlugin(Registrar registrar) {
+    channel = new MethodChannel(registrar.messenger(), "flutter_audio_recorder");
+    channel.setMethodCallHandler(this);
+
     this.registrar = registrar;
     this.registrar.addRequestPermissionsResultListener(this);
   }
@@ -69,29 +83,32 @@ public class FlutterAudioRecorderPlugin implements MethodCallHandler, PluginRegi
         boolean granted = true;
         Log.d(LOG_NAME, "parsing result");
         for (int result : grantResults) {
-          if(result != PackageManager.PERMISSION_GRANTED) {
+          if (result != PackageManager.PERMISSION_GRANTED) {
             Log.d(LOG_NAME, "result" + result);
             granted = false;
           }
         }
         Log.d(LOG_NAME, "onRequestPermissionsResult -" + granted);
-        if(_result != null) {
+        if (_result != null) {
           _result.success(granted);
         }
         return granted;
-        default:
-          Log.d(LOG_NAME, "onRequestPermissionsResult - false");
-          return false;
+      default:
+        Log.d(LOG_NAME, "onRequestPermissionsResult - false");
+        return false;
     }
   }
 
-  private boolean hasRecordPermission(){
+  private boolean hasRecordPermission() {
     // if after [Marshmallow], we need to check permission on runtime
     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-      return (ContextCompat.checkSelfPermission(registrar.context(), Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
-              && (ContextCompat.checkSelfPermission(registrar.context(), Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED);
+      return (ContextCompat.checkSelfPermission(registrar.context(),
+          Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
+          && (ContextCompat.checkSelfPermission(registrar.context(),
+              Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED);
     } else {
-      return ContextCompat.checkSelfPermission(registrar.context(), Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+      return ContextCompat.checkSelfPermission(registrar.context(),
+          Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
     }
   }
 
@@ -100,7 +117,7 @@ public class FlutterAudioRecorderPlugin implements MethodCallHandler, PluginRegi
     // Log.d(LOG_NAME, "calling " + call.method);
     _result = result;
 
-    switch (call.method){
+    switch (call.method) {
       case "hasPermissions":
         handleHasPermission();
         break;
@@ -128,25 +145,28 @@ public class FlutterAudioRecorderPlugin implements MethodCallHandler, PluginRegi
     }
   }
 
-  private void handleHasPermission(){
-    if(hasRecordPermission()){
+  private void handleHasPermission() {
+    if (hasRecordPermission()) {
       Log.d(LOG_NAME, "handleHasPermission true");
-      if(_result != null) {
+      if (_result != null) {
         _result.success(true);
       }
     } else {
       Log.d(LOG_NAME, "handleHasPermission false");
 
       if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-        ActivityCompat.requestPermissions(registrar.activity(), new String[]{Manifest.permission.RECORD_AUDIO, Manifest.permission.WRITE_EXTERNAL_STORAGE}, PERMISSIONS_REQUEST_RECORD_AUDIO);
+        ActivityCompat.requestPermissions(registrar.activity(),
+            new String[] { Manifest.permission.RECORD_AUDIO, Manifest.permission.WRITE_EXTERNAL_STORAGE },
+            PERMISSIONS_REQUEST_RECORD_AUDIO);
       } else {
-        ActivityCompat.requestPermissions(registrar.activity(), new String[]{Manifest.permission.RECORD_AUDIO}, PERMISSIONS_REQUEST_RECORD_AUDIO);
+        ActivityCompat.requestPermissions(registrar.activity(), new String[] { Manifest.permission.RECORD_AUDIO },
+            PERMISSIONS_REQUEST_RECORD_AUDIO);
       }
     }
 
   }
 
-  private void handleInit(MethodCall call, Result result)  {
+  private void handleInit(MethodCall call, Result result) {
     resetRecorder();
     mSampleRate = Integer.parseInt(call.argument("sampleRate").toString());
     mFilePath = call.argument("path").toString();
@@ -167,7 +187,7 @@ public class FlutterAudioRecorderPlugin implements MethodCallHandler, PluginRegi
   private void handleCurrent(MethodCall call, Result result) {
     HashMap<String, Object> currentResult = new HashMap<>();
     currentResult.put("duration", getDuration() * 1000);
-    currentResult.put("path", (mStatus == "stopped")? mFilePath : getTempFilename());
+    currentResult.put("path", (mStatus == "stopped") ? mFilePath : getTempFilename());
     currentResult.put("audioFormat", mExtension);
     currentResult.put("peakPower", mPeakPower);
     currentResult.put("averagePower", mAveragePower);
@@ -178,7 +198,8 @@ public class FlutterAudioRecorderPlugin implements MethodCallHandler, PluginRegi
   }
 
   private void handleStart(MethodCall call, Result result) {
-    mRecorder = new AudioRecord(MediaRecorder.AudioSource.MIC, mSampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufferSize);
+    mRecorder = new AudioRecord(MediaRecorder.AudioSource.MIC, mSampleRate, AudioFormat.CHANNEL_IN_MONO,
+        AudioFormat.ENCODING_PCM_16BIT, bufferSize);
     try {
       mFileOutputStream = new FileOutputStream(getTempFilename());
     } catch (FileNotFoundException e) {
@@ -191,7 +212,7 @@ public class FlutterAudioRecorderPlugin implements MethodCallHandler, PluginRegi
     result.success(null);
   }
 
-  private void startThread(){
+  private void startThread() {
     mRecordingThread = new Thread(new Runnable() {
       @Override
       public void run() {
@@ -218,7 +239,7 @@ public class FlutterAudioRecorderPlugin implements MethodCallHandler, PluginRegi
   }
 
   private void handleStop(MethodCall call, Result result) {
-    if(mStatus.equals("stopped")) {
+    if (mStatus.equals("stopped")) {
       result.success(null);
     } else {
       mStatus = "stopped";
@@ -232,7 +253,6 @@ public class FlutterAudioRecorderPlugin implements MethodCallHandler, PluginRegi
       currentResult.put("averagePower", mAveragePower);
       currentResult.put("isMeteringEnabled", true);
       currentResult.put("status", mStatus);
-
 
       resetRecorder();
       mRecordingThread = null;
@@ -258,23 +278,27 @@ public class FlutterAudioRecorderPlugin implements MethodCallHandler, PluginRegi
     int size = bufferSize;
     byte bData[] = new byte[size];
 
-    while (mStatus == "recording"){
-      Log.d(LOG_NAME, "reading audio data");
+    while (mStatus == "recording") {
+      // Log.d(LOG_NAME, "Reading le audio data");
       mRecorder.read(bData, 0, bData.length);
       mDataSize += bData.length;
+
+      String dataLen = Integer.toString(bData.length);
+      // Log.d("BDATA LENGTH: ", dataLen);    // Says 2688... a lot.
+
       updatePowers(bData);
-        try {
-          mFileOutputStream.write(bData);
-        } catch (IOException e) {
-          e.printStackTrace();
-        }
+      try {
+        mFileOutputStream.write(bData);
+      } catch (IOException e) {
+        e.printStackTrace();
+      }
 
     }
   }
 
   private void deleteTempFile() {
     File file = new File(getTempFilename());
-    if(file.exists()) {
+    if (file.exists()) {
       file.delete();
     }
   }
@@ -301,8 +325,7 @@ public class FlutterAudioRecorderPlugin implements MethodCallHandler, PluginRegi
       totalAudioLen = in.getChannel().size();
       totalDataLen = totalAudioLen + 36;
 
-      WriteWaveFileHeader(out, totalAudioLen, totalDataLen,
-              longSampleRate, channels, byteRate);
+      WriteWaveFileHeader(out, totalAudioLen, totalDataLen, longSampleRate, channels, byteRate);
 
       while (in.read(data) != -1) {
         out.write(data);
@@ -317,9 +340,8 @@ public class FlutterAudioRecorderPlugin implements MethodCallHandler, PluginRegi
     }
   }
 
-  private void WriteWaveFileHeader(FileOutputStream out, long totalAudioLen,
-                                   long totalDataLen, long longSampleRate, int channels, long byteRate)
-          throws IOException {
+  private void WriteWaveFileHeader(FileOutputStream out, long totalAudioLen, long totalDataLen, long longSampleRate,
+      int channels, long byteRate) throws IOException {
     byte[] header = new byte[44];
 
     header[0] = 'R'; // RIFF/WAVE header
@@ -371,37 +393,67 @@ public class FlutterAudioRecorderPlugin implements MethodCallHandler, PluginRegi
   }
 
   private short[] byte2short(byte[] bData) {
-    short[] out = new short[bData.length/2];
+    short[] out = new short[bData.length / 2];
     ByteBuffer.wrap(bData).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(out);
     return out;
   }
 
-  private void resetRecorder(){
+  private void resetRecorder() {
     mPeakPower = -120;
     mAveragePower = -120;
     mDataSize = 0;
   }
-
-  private void updatePowers(byte[] bdata){
+  
+  private void updatePowers(byte[] bdata) {
     short[] data = byte2short(bdata);
-    short sampleVal = data[data.length - 1];
-    String[] escapeStatusList = new String[]{"paused", "stopped", "initialized", "unset"};
-
-    if(sampleVal == 0 || Arrays.asList(escapeStatusList).contains(mStatus)){
-      mAveragePower = -120; // to match iOS silent case
+    audioData = new int[data.length];
+    // listData = new ArrayList<Short>();
+    
+    for (int i = 0; i < data.length; i++) {
+      audioData[i] = data[i];
     }
-    else {
+    
+    // TODO: INVOKE A METHOD TO GIVE ARRAY TO DART
+    new Handler(Looper.getMainLooper()).post(new Runnable() {
+      @Override
+      public void run() {
+        try {
+        // JSONObject json = new JSONObject();
+        // json.put("audioData", data);
+
+        // Log.d(LOG_NAME, "Sending " + data +  " to Dart.");
+        channel.invokeMethod("sendAudioData", audioData);
+      
+        } catch (Exception e) {
+          Log.d(LOG_NAME, "Audio Sending Exception: " + e.toString());
+        }
+      }
+
+      // @Override
+      // public void success(Object o) {
+      //   Log.d(LOG_NAME, "Audio data passed: " + o.toString());
+      // }
+    });
+    // Log.d("Data in short: ", Arrays.toString(data));
+    
+    
+    short sampleVal = data[data.length - 1];
+    String[] escapeStatusList = new String[] { "paused", "stopped", "initialized", "unset" };
+
+    if (sampleVal == 0 || Arrays.asList(escapeStatusList).contains(mStatus)) {
+      mAveragePower = -120; // to match iOS silent case
+    } else {
       // iOS factor : to match iOS power level
       double iOSFactor = 0.25;
-      mAveragePower = 20 * Math.log(Math.abs(sampleVal) / 32768.0)  * iOSFactor;
+      mAveragePower = 20 * Math.log(Math.abs(sampleVal) / 32768.0) * iOSFactor;
     }
 
     mPeakPower = mAveragePower;
     // Log.d(LOG_NAME, "Peak: " + mPeakPower + " average: "+ mAveragePower);
   }
 
-  private int getDuration(){
+  private int getDuration() {
     long duration = mDataSize / (mSampleRate * 2 * 1);
-    return (int)duration;
+    return (int) duration;
   }
 }

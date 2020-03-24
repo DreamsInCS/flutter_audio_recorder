@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
+// import 'dart:ffi';
 import 'dart:io';
-
+import 'dart:typed_data';
 import 'package:file/local.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
@@ -11,18 +13,22 @@ class FlutterAudioRecorder {
       const MethodChannel('flutter_audio_recorder');
   static const String DEFAULT_EXTENSION = '.m4a';
   static LocalFileSystem fs = LocalFileSystem();
+  static const int AUDIO_SNIPPET_SECONDS = 2;   // Length of snippet
 
   String _path;
   String _extension;
   Recording _recording;
   int _sampleRate;
+  List<Int16List> _audioSnippet;    // Audio data sequences
+  Duration _snippetDuration;
+  Timer _timer;
 
   Future _initRecorder;
   Future get initialized => _initRecorder;
   Recording get recording => _recording;
 
   FlutterAudioRecorder(String path,
-      {AudioFormat audioFormat, int sampleRate = 16000}) {
+      {AudioFormat audioFormat, int sampleRate = 44100}) {
     _initRecorder = _init(path, audioFormat, sampleRate);
   }
 
@@ -30,6 +36,11 @@ class FlutterAudioRecorder {
   Future _init(String path, AudioFormat audioFormat, int sampleRate) async {
     String extension;
     String extensionInPath;
+
+    // Prepare for first audio snippet
+    // _audioSnippet = List(); <---- performed in audioDataCallback()
+    _snippetDuration = Duration(seconds: AUDIO_SNIPPET_SECONDS);
+
     if (path != null) {
       // Extension(.xyz) of Path
       extensionInPath = p.extension(path);
@@ -86,7 +97,18 @@ class FlutterAudioRecorder {
   /// Once executed, audio recording will start working and
   /// a file will be generated in user's file system
   Future start() async {
-    return _channel.invokeMethod('start');
+    _audioSnippet = List();
+    _channel.setMethodCallHandler(_handleNativeMethodCall);
+
+    await _channel.invokeMethod('start');
+
+    _timer = new Timer.periodic(_snippetDuration, (Timer timer) {
+      // Pass data from _audioSnippet somewhere
+      print("_audioSnippet's length is ${_audioSnippet.length}.");
+
+      // Empty out _audioSnippet
+      _audioSnippet = List();
+    });
   }
 
   /// Request currently [Recording] recording to be [Paused]
@@ -112,6 +134,12 @@ class FlutterAudioRecorder {
       _responseToRecording(response);
     }
 
+    // Stop the timer if it is currently active,
+    // preventing any further passage of _audioSnippet's data to server
+    if (_timer.isActive) {
+      _timer.cancel();
+    }
+
     return _recording;
   }
 
@@ -131,12 +159,31 @@ class FlutterAudioRecorder {
     return _recording;
   }
 
-  /// Returns the result of record permission
-  /// if not determined(app first launch),
-  /// this will ask user to whether grant the permission
+  /// Returns the result of record permissionijggle
   static Future<bool> get hasPermissions async {
     bool hasPermission = await _channel.invokeMethod('hasPermissions');
     return hasPermission;
+  }
+
+  /// Mediates native calls from Android/iOS to Dart.
+  /// Currently handles receiving snippets of short[] audio data.
+  Future<dynamic> _handleNativeMethodCall(MethodCall call) async {
+    // print("call.arguments: ${call.arguments}");
+    // print("call.arguments type: ${call.arguments.runtimeType}");
+    switch (call.method) {
+      case "sendAudioData":
+        // print("call.arguments.runtimeType: ${call.arguments.runtimeType}.");
+        Int16List result = new Int16List.fromList(call.arguments);
+
+        // print("result.runtimeType: ${result.runtimeType}");
+        _audioSnippet.add(result);
+        // print("Dart: Added to _audioSnippet.");
+        break;
+      default:
+        throw new ArgumentError("Unknown method: ${call.method}");
+    }
+
+    return null;
   }
 
   ///  util - response msg to recording object.

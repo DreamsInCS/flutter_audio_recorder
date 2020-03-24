@@ -2,17 +2,22 @@ import Flutter
 import UIKit
 import AVFoundation
 
+// Debugging purposes?
+import os.log
+
 public class SwiftFlutterAudioRecorderPlugin: NSObject, FlutterPlugin, AVAudioRecorderDelegate {
     // status - unset, initialized, recording, paused, stopped
     var status = "unset"
     var hasPermissions = false
     var mExtension = ""
     var mPath = ""
-    var mSampleRate = 16000
+    var mSampleRate = 44100
+    var mBitRate = 16000
     var channel = 0
     var startTime: Date!
     var settings: [String:Int]!
     var audioRecorder: AVAudioRecorder!
+    var captureSession: AVCaptureSession!
     
     public static func register(with registrar: FlutterPluginRegistrar) {
         let channel = FlutterMethodChannel(name: "flutter_audio_recorder", binaryMessenger: registrar.messenger())
@@ -44,12 +49,32 @@ public class SwiftFlutterAudioRecorderPlugin: NSObject, FlutterPlugin, AVAudioRe
                 result(recordingResult)
             }
         case "init":
-            print("init")
+            NSLog("init")
+
+            // MY code.
+            captureSession = AVCaptureSession()
+            guard let audioDevice = AVCaptureDevice.default(for: .audio)
+                else {
+                    print("Oof. audioDevice initialization failed.")
+                    return
+                }
+
+            do {
+                let audioInput = try AVCaptureDeviceInput(device: audioDevice)
+
+                if captureSession.canAddInput(audioInput) {
+                    captureSession.addInput(audioInput)
+                }
+            } catch {
+                print("Audio Capture Device Error.")
+                return
+            }
             
+            // NSLog("captureSession successfully added input.")
             let dic = call.arguments as! [String : Any]
             mExtension = dic["extension"] as? String ?? ""
             mPath = dic["path"] as? String ?? ""
-            mSampleRate = dic["sampleRate"] as? Int ?? 16000
+            mSampleRate = dic["sampleRate"] as? Int ?? 44100
             print("m:", mExtension, mPath)
             startTime = Date()
             if mPath == "" {
@@ -57,11 +82,12 @@ public class SwiftFlutterAudioRecorderPlugin: NSObject, FlutterPlugin, AVAudioRe
                 mPath = documentsPath + "/" + String(Int(startTime.timeIntervalSince1970)) + ".m4a"
                 print("path: " + mPath)
             }
-            
+
             settings = [
                 AVFormatIDKey: getOutputFormatFromString(mExtension),
                 AVSampleRateKey: mSampleRate,
                 AVNumberOfChannelsKey: 1,
+                AVEncoderBitRateKey : mBitRate,
                 AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
             ]
             
@@ -96,6 +122,7 @@ public class SwiftFlutterAudioRecorderPlugin: NSObject, FlutterPlugin, AVAudioRe
             print("start")
             
             if status == "initialized" {
+                // captureSession.startRunning()
                 audioRecorder.record()
                 status = "recording"
             }
@@ -122,6 +149,7 @@ public class SwiftFlutterAudioRecorderPlugin: NSObject, FlutterPlugin, AVAudioRe
                 recordingResult["status"] = status
 
                 audioRecorder.stop()
+                // captureSession.stopRunning()
                 audioRecorder = nil
                 result(recordingResult)
             }
