@@ -7,6 +7,9 @@ import 'package:file/local.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
+import 'package:web_socket_channel/io.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+
 /// Audio Recorder Plugin
 class FlutterAudioRecorder {
   static const MethodChannel _channel =
@@ -23,9 +26,18 @@ class FlutterAudioRecorder {
   Duration _snippetDuration;
   Timer _timer;
 
+  // ngrok on laptop (regrettably)
+  // You have to type: ngrok http [YOUR_PORT] to set up a session
+  // use desktop IP address otherwise
+  String url = "ws://66d76f20.ngrok.io";
+
+  WebSocketChannel wsChannel;
+  JsonEncoder jsonEncoder;
+
   Future _initRecorder;
   Future get initialized => _initRecorder;
   Recording get recording => _recording;
+  Stream get ws => wsChannel.stream;
 
   FlutterAudioRecorder(String path,
       {AudioFormat audioFormat, int sampleRate = 44100}) {
@@ -34,6 +46,9 @@ class FlutterAudioRecorder {
 
   /// Initialized recorder instance
   Future _init(String path, AudioFormat audioFormat, int sampleRate) async {
+    wsChannel = IOWebSocketChannel.connect(url);
+    jsonEncoder = JsonEncoder();
+
     String extension;
     String extensionInPath;
 
@@ -105,6 +120,7 @@ class FlutterAudioRecorder {
     _timer = new Timer.periodic(_snippetDuration, (Timer timer) {
       // Pass data from _audioSnippet somewhere
       print("_audioSnippet's length is ${_audioSnippet.length}.");
+      wsChannel.sink.add(jsonEncoder.convert(_audioSnippet)); // Sending json of audio
 
       // Empty out _audioSnippet
       _audioSnippet = List();
@@ -137,6 +153,7 @@ class FlutterAudioRecorder {
     // Stop the timer if it is currently active,
     // preventing any further passage of _audioSnippet's data to server
     if (_timer.isActive) {
+      wsChannel.sink.close();
       _timer.cancel();
     }
 
@@ -184,6 +201,11 @@ class FlutterAudioRecorder {
     }
 
     return null;
+  }
+
+  void dispose()
+  {
+    wsChannel.sink.close();
   }
 
   ///  util - response msg to recording object.

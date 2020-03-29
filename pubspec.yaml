@@ -14,6 +14,7 @@ dependencies:
   flutter:
     sdk: flutter
   file: ^5.0.4
+  web_socket_channel: ^1.1.0
 
 
 dev_dependencies:
