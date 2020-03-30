@@ -26,10 +26,12 @@ class FlutterAudioRecorder {
   Duration _snippetDuration;
   Timer _timer;
 
-  // ngrok on laptop (regrettably)
-  // You have to type: ngrok http [YOUR_PORT] to set up a session
-  // use desktop IP address otherwise
-  String url = "ws://66d76f20.ngrok.io";
+  // ngrok on laptop
+  // You have to type: ngrok http [YOUR_PORT] via command line to set up a session
+  static const String url = "ws://4b229024.ngrok.io";
+  
+  // Format: ws://[IPv4Address]:PORT_NUMBER (for desktop)
+  // static const String server = "ws://209.131.247.167:5000";
 
   WebSocketChannel wsChannel;
   JsonEncoder jsonEncoder;
